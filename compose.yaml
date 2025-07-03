@@ -1,0 +1,7 @@
+﻿services:
+  ovhstatuswatcher:
+    image: ovhstatuswatcher
+    build:
+      context: .
+      dockerfile: OVHStatusWatcher/Dockerfile
+
