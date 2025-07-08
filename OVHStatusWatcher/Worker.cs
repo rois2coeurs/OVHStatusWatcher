@@ -1,6 +1,8 @@
 using System.ServiceModel.Syndication;
 using System.Xml;
 using Microsoft.EntityFrameworkCore;
+using OVHStatusWatcher.Helpers;
+using OVHStatusWatcher.Models;
 
 namespace OVHStatusWatcher;
 
@@ -36,21 +38,68 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
         using var reader = XmlReader.Create(url);
         var feed = SyndicationFeed.Load(reader);
 
-        var datacenters = db.Trackers.Select(t => t.Datacenter).Distinct().ToList();
-        var regions = datacenters.Select(GetOnlyAlphabetical).Distinct().ToList();
+        var posts = feed.Items.ToList();
 
-        var firstPost = feed
-            .Items
-            .Where(item => datacenters.Any(dc => item.Title.Text.Contains(dc, StringComparison.OrdinalIgnoreCase))
-                           || regions.Any(region =>
-                               item.Title.Text.Contains(region, StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-
-        Console.WriteLine(firstPost);
+        foreach (var post in posts)
+        {
+            ProcessPost(post, db);
+        }
     }
 
-    private static string GetOnlyAlphabetical(string input)
+    private static void ProcessPost(SyndicationItem post, MyDbContext db)
     {
-        return new string(input.Where(char.IsLetter).ToArray());
+        if (OvhDataHelper.IsRack(post.Title.Text))
+        {
+            try
+            {
+                var rackNum = OvhDataHelper.ExtractRackNumber(post.Title.Text);
+                var rack = db.Racks.FirstOrDefault(r => r.Name == rackNum);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Something went wrong while trying to extract rack number");
+            }
+        }
+
+        var envs = OvhDataHelper.ExtractEnvs(post.Title.Text);
+
+        foreach (var env in envs)
+        {
+            if (OvhDataHelper.IsRegion(env))
+                GetOrCreateRegion(db, env);
+            else
+                GetOrCreateDatacenter(db, env);
+        }
+
+        Console.WriteLine(envs);
+    }
+
+    private static Datacenter GetOrCreateDatacenter(MyDbContext db, string datacenter)
+    {
+        var obj = db.Datacenters.FirstOrDefault(d => d.Name == datacenter);
+        if (obj is not null) return obj;
+        var region = GetOrCreateRegion(db, datacenter);
+        obj = new Datacenter
+        {
+            Name = datacenter,
+            Region = region
+        };
+        db.Add(obj);
+        db.SaveChanges();
+        return obj;
+    }
+
+    private static Region GetOrCreateRegion(MyDbContext db, string datacenter)
+    {
+        var region = OvhDataHelper.ExtractRegionFromDatacenter(datacenter);
+        var regionObj = db.Regions.FirstOrDefault(r => r.Name == region);
+        if (regionObj is not null) return regionObj;
+        regionObj = new Region
+        {
+            Name = region
+        };
+        db.Add(regionObj);
+        db.SaveChanges();
+        return regionObj;
     }
 }

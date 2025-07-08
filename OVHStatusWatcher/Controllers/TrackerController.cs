@@ -11,22 +11,18 @@ namespace OVHStatusWatcher.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class TrackerController(IConfiguration config, MyDbContext context) : ControllerBase
+    public class TrackerController(MyDbContext context) : ControllerBase
     {
-        private readonly MyDbContext _context = context;
-
-        // GET: api/e
         [HttpGet]
         public async Task<ActionResult<IEnumerable<Tracker>>> GetTrackers()
         {
-            return await _context.Trackers.ToListAsync();
+            return await context.Trackers.ToListAsync();
         }
 
-        // GET: api/e/5
-        [HttpGet("{id}")]
+        [HttpGet("{id:long}")]
         public async Task<ActionResult<Tracker>> GetTracker(long id)
         {
-            var tracker = await _context.Trackers.FindAsync(id);
+            var tracker = await context.Trackers.FindAsync(id);
 
             if (tracker == null)
             {
@@ -36,9 +32,7 @@ namespace OVHStatusWatcher.Controllers
             return tracker;
         }
 
-        // PUT: api/e/5
-        // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
-        [HttpPut("{id}")]
+        [HttpPut("{id:long}")]
         public async Task<IActionResult> PutTracker(long id, Tracker tracker)
         {
             if (id != tracker.Id)
@@ -46,11 +40,11 @@ namespace OVHStatusWatcher.Controllers
                 return BadRequest();
             }
 
-            _context.Entry(tracker).State = EntityState.Modified;
+            context.Entry(tracker).State = EntityState.Modified;
 
             try
             {
-                await _context.SaveChangesAsync();
+                await context.SaveChangesAsync();
             }
             catch (DbUpdateConcurrencyException)
             {
@@ -58,45 +52,39 @@ namespace OVHStatusWatcher.Controllers
                 {
                     return NotFound();
                 }
-                else
-                {
-                    throw;
-                }
+                throw;
             }
 
             return NoContent();
         }
 
-        // POST: api/e
-        // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
         [HttpPost]
         public async Task<ActionResult<Tracker>> PostTracker(Tracker tracker)
         {
-            _context.Trackers.Add(tracker);
-            await _context.SaveChangesAsync();
+            context.Trackers.Add(tracker);
+            await context.SaveChangesAsync();
 
             return CreatedAtAction("GetTracker", new { id = tracker.Id }, tracker);
         }
 
-        // DELETE: api/e/5
-        [HttpDelete("{id}")]
+        [HttpDelete("{id:long}")]
         public async Task<IActionResult> DeleteTracker(long id)
         {
-            var tracker = await _context.Trackers.FindAsync(id);
+            var tracker = await context.Trackers.FindAsync(id);
             if (tracker == null)
             {
                 return NotFound();
             }
 
-            _context.Trackers.Remove(tracker);
-            await _context.SaveChangesAsync();
+            context.Trackers.Remove(tracker);
+            await context.SaveChangesAsync();
 
             return NoContent();
         }
 
         private bool TrackerExists(long id)
         {
-            return _context.Trackers.Any(e => e.Id == id);
+            return context.Trackers.Any(e => e.Id == id);
         }
     }
 }
