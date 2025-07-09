@@ -1,5 +1,6 @@
 using System.ServiceModel.Syndication;
 using System.Xml;
+using Microsoft.EntityFrameworkCore;
 using OVHStatusWatcher.Helpers;
 using OVHStatusWatcher.Models;
 
@@ -7,6 +8,8 @@ namespace OVHStatusWatcher;
 
 public class Worker(IServiceProvider serviceProvider) : BackgroundService
 {
+    private static readonly HashSet<string> ProcessedPosts = [];
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var scope = serviceProvider.CreateScope();
@@ -41,13 +44,18 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
         {
             try
             {
+                if (post.Id is null || ProcessedPosts.Contains(post.Id)) continue;
+
                 await ProcessPost(post, db);
+                ProcessedPosts.Add(post.Id);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error processing post '{post.Title.Text}': {ex.Message}");
             }
         }
+
+        Console.WriteLine("OVH status check completed.");
     }
 
     private static async Task ProcessPost(SyndicationItem post, MyDbContext db)
@@ -58,7 +66,7 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
             try
             {
                 var rackNum = OvhDataHelper.ExtractRackNumber(post.Title.Text);
-                var rack = db.Racks.FirstOrDefault(r => r.Name == rackNum);
+                var rack = db.Racks.Include(r => r.Datacenter.Region).FirstOrDefault(r => r.Name == rackNum);
                 if (rack is not null)
                 {
                     await discordWebhook.SendRackNotificationAsync(rack, post);
@@ -101,7 +109,7 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
 
     private static Datacenter GetOrCreateDatacenter(MyDbContext db, string datacenter)
     {
-        var obj = db.Datacenters.FirstOrDefault(d => d.Name == datacenter);
+        var obj = db.Datacenters.Include(d => d.Region).FirstOrDefault(d => d.Name == datacenter);
         if (obj is not null) return obj;
         var region = GetOrCreateRegion(db, datacenter);
         obj = new Datacenter

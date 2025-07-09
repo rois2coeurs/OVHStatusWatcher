@@ -62,7 +62,6 @@ public partial class DiscordWebhookHelper(MyDbContext db) : INotificationHelper
             await SendDiscordNotificationAsync(GetDiscordMessage(post), tracker);
         }
 
-        await db.Entry(datacenter).ReloadAsync();
         await SendRegionNotificationAsync(datacenter.Region, post);
     }
 
