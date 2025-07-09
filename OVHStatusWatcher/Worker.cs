@@ -39,23 +39,33 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
 
         foreach (var post in posts)
         {
-            await ProcessPost(post, db);
+            try
+            {
+                await ProcessPost(post, db);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing post '{post.Title.Text}': {ex.Message}");
+            }
         }
     }
 
     private static async Task ProcessPost(SyndicationItem post, MyDbContext db)
     {
-        var discordWebhook =
-            new DiscordWebhookHelper(
-                "https://discord.com/api/webhooks/1389631246786891888/zYBi8gr7mhuc8Yg4_PI0hmN01dQ2EnH47cQ9u1KFPoUMwTVKyu1vlY6oF80v42zqk426");
+        var discordWebhook = new DiscordWebhookHelper(db);
         if (OvhDataHelper.IsRack(post.Title.Text))
         {
             try
             {
                 var rackNum = OvhDataHelper.ExtractRackNumber(post.Title.Text);
                 var rack = db.Racks.FirstOrDefault(r => r.Name == rackNum);
+                if (rack is not null)
+                {
+                    await discordWebhook.SendRackNotificationAsync(rack, post);
+                    return;
+                }
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Console.WriteLine("Something went wrong while trying to extract rack number");
             }
@@ -63,21 +73,30 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
 
         var envs = OvhDataHelper.ExtractEnvs(post.Title.Text);
 
+        List<Region> regions = [];
+        List<Datacenter> datacenters = [];
+
         foreach (var env in envs)
         {
             if (OvhDataHelper.IsRegion(env))
             {
-                var region = GetOrCreateRegion(db, env);
-                await discordWebhook.SendRegionNotificationAsync(region, post);
+                regions.Add(GetOrCreateRegion(db, env));
             }
             else
             {
-                var datacenter = GetOrCreateDatacenter(db, env);
-                await discordWebhook.SendDataCenterNotificationAsync(datacenter, post);
+                datacenters.Add(GetOrCreateDatacenter(db, env));
             }
         }
 
-        Console.WriteLine(envs);
+        foreach (var region in regions)
+        {
+            await discordWebhook.SendRegionNotificationAsync(region, post);
+        }
+
+        foreach (var datacenter in datacenters)
+        {
+            await discordWebhook.SendDataCenterNotificationAsync(datacenter, post);
+        }
     }
 
     private static Datacenter GetOrCreateDatacenter(MyDbContext db, string datacenter)

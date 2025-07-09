@@ -5,9 +5,9 @@ using OVHStatusWatcher.Models;
 
 namespace OVHStatusWatcher.Helpers;
 
-public partial class DiscordWebhookHelper(string webhookUrl) : INotificationHelper
+public partial class DiscordWebhookHelper(MyDbContext db) : INotificationHelper
 {
-    private async Task SendDiscordNotificationAsync(string message)
+    private async Task SendDiscordNotificationAsync(string message, string webhookUrl)
     {
         using var httpClient = new HttpClient();
 
@@ -32,7 +32,17 @@ public partial class DiscordWebhookHelper(string webhookUrl) : INotificationHelp
         }
 
         var message = $"Rack Notification: {rack.Name} - {post.Title.Text}\n{post.Summary.Text}";
-        await SendDiscordNotificationAsync(message);
+        var trackers = db.Trackers
+            .Where(t => t.Rack != null && t.Rack.Id == rack.Id)
+            .Select(t => t.WebHookUrl)
+            .ToList();
+
+        foreach (var tracker in trackers)
+        {
+            await SendDiscordNotificationAsync(message, tracker);
+        }
+
+        await SendDataCenterNotificationAsync(rack.Datacenter, post);
     }
 
     public async Task SendDataCenterNotificationAsync(Datacenter datacenter, SyndicationItem post)
@@ -42,7 +52,18 @@ public partial class DiscordWebhookHelper(string webhookUrl) : INotificationHelp
             throw new ArgumentNullException(nameof(datacenter), "Datacenter cannot be null");
         }
 
-        await SendDiscordNotificationAsync(GetDiscordMessage(post));
+        var trackers = db.Trackers
+            .Where(t => t.Datacenter != null && t.Datacenter.Id == datacenter.Id)
+            .Select(t => t.WebHookUrl)
+            .ToList();
+
+        foreach (var tracker in trackers)
+        {
+            await SendDiscordNotificationAsync(GetDiscordMessage(post), tracker);
+        }
+
+        await db.Entry(datacenter).ReloadAsync();
+        await SendRegionNotificationAsync(datacenter.Region, post);
     }
 
     public async Task SendRegionNotificationAsync(Region region, SyndicationItem post)
@@ -52,7 +73,15 @@ public partial class DiscordWebhookHelper(string webhookUrl) : INotificationHelp
             throw new ArgumentNullException(nameof(region), "Region cannot be null");
         }
 
-        await SendDiscordNotificationAsync(GetDiscordMessage(post));
+        var trackers = db.Trackers
+            .Where(t => t.Region != null && t.Region.Id == region.Id)
+            .Select(t => t.WebHookUrl)
+            .ToList();
+
+        foreach (var tracker in trackers)
+        {
+            await SendDiscordNotificationAsync(GetDiscordMessage(post), tracker);
+        }
     }
 
     private static string GetDiscordMessage(SyndicationItem post)
@@ -66,12 +95,10 @@ public partial class DiscordWebhookHelper(string webhookUrl) : INotificationHelp
         var imageUrl = string.Empty;
         if (RegexImgTag().IsMatch(description))
         {
-            // Extract the first image URL from the description
             var match = RegexImgTag().Match(description);
             if (match.Success)
             {
                 imageUrl = match.Groups[1].Value;
-                RegexImgTag().Replace(description, "");
             }
         }
 
@@ -101,7 +128,7 @@ public partial class DiscordWebhookHelper(string webhookUrl) : INotificationHelp
         return System.Text.Json.JsonSerializer.Serialize(message, new System.Text.Json.JsonSerializerOptions
         {
             PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         });
     }
 
@@ -112,7 +139,6 @@ public partial class DiscordWebhookHelper(string webhookUrl) : INotificationHelp
             return string.Empty;
         }
 
-        // Simple conversion logic, can be improved with a proper HTML parser
         html = html.Replace("<br>", "\n")
             .Replace("<b>", "**")
             .Replace("</b>", "**")
@@ -140,7 +166,6 @@ public partial class DiscordWebhookHelper(string webhookUrl) : INotificationHelp
             .Replace("<body>", "")
             .Replace("</body>", "");
 
-        // Replace <var *> <.var> with `code`
         html = RegexVarTag().Replace(html, m => $"`{m.Groups[2].Value}`");
         html = RegexHrefTag().Replace(html, m => $"[{m.Groups[2].Value}]({m.Groups[1].Value})");
         return html.Trim();
