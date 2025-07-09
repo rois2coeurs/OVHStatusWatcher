@@ -1,6 +1,5 @@
 using System.ServiceModel.Syndication;
 using System.Xml;
-using Microsoft.EntityFrameworkCore;
 using OVHStatusWatcher.Helpers;
 using OVHStatusWatcher.Models;
 
@@ -8,29 +7,27 @@ namespace OVHStatusWatcher;
 
 public class Worker(IServiceProvider serviceProvider) : BackgroundService
 {
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var scope = serviceProvider.CreateScope();
-        using var db = scope.ServiceProvider.GetRequiredService<MyDbContext>();
+        await using var db = scope.ServiceProvider.GetRequiredService<MyDbContext>();
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                CheckOvhStatus(db);
+                await CheckOvhStatus(db);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"An error occurred: {ex.Message}");
             }
 
-            Task.Delay(TimeSpan.FromSeconds(15), stoppingToken).Wait(stoppingToken);
+            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken).WaitAsync(stoppingToken);
         }
-
-        return Task.CompletedTask;
     }
 
-    private static void CheckOvhStatus(MyDbContext db)
+    private static async Task CheckOvhStatus(MyDbContext db)
     {
         Console.WriteLine("Checking OVH status...");
 
@@ -42,12 +39,15 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
 
         foreach (var post in posts)
         {
-            ProcessPost(post, db);
+            await ProcessPost(post, db);
         }
     }
 
-    private static void ProcessPost(SyndicationItem post, MyDbContext db)
+    private static async Task ProcessPost(SyndicationItem post, MyDbContext db)
     {
+        var discordWebhook =
+            new DiscordWebhookHelper(
+                "https://discord.com/api/webhooks/1389631246786891888/zYBi8gr7mhuc8Yg4_PI0hmN01dQ2EnH47cQ9u1KFPoUMwTVKyu1vlY6oF80v42zqk426");
         if (OvhDataHelper.IsRack(post.Title.Text))
         {
             try
@@ -66,9 +66,15 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
         foreach (var env in envs)
         {
             if (OvhDataHelper.IsRegion(env))
-                GetOrCreateRegion(db, env);
+            {
+                var region = GetOrCreateRegion(db, env);
+                await discordWebhook.SendRegionNotificationAsync(region, post);
+            }
             else
-                GetOrCreateDatacenter(db, env);
+            {
+                var datacenter = GetOrCreateDatacenter(db, env);
+                await discordWebhook.SendDataCenterNotificationAsync(datacenter, post);
+            }
         }
 
         Console.WriteLine(envs);
