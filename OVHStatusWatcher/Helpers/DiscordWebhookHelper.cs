@@ -1,13 +1,16 @@
 using System.ServiceModel.Syndication;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using OVHStatusWatcher.Models;
 
 namespace OVHStatusWatcher.Helpers;
 
 public partial class DiscordWebhookHelper(MyDbContext db) : INotificationHelper
 {
-    private async Task SendDiscordNotificationAsync(string message, string webhookUrl)
+    private static async Task SendDiscordNotificationAsync(string message, string webhookUrl,
+        CancellationToken cancellationToken = default)
     {
         using var httpClient = new HttpClient();
 
@@ -16,79 +19,81 @@ public partial class DiscordWebhookHelper(MyDbContext db) : INotificationHelper
             System.Text.Encoding.UTF8,
             "application/json"
         );
-        var res = await httpClient.PostAsync(webhookUrl, content);
+        var res = await httpClient.PostAsync(webhookUrl, content, cancellationToken);
         if (!res.IsSuccessStatusCode)
         {
             throw new Exception(
-                $"Failed to send notification: {res.StatusCode} - {await res.Content.ReadAsStringAsync()}");
+                $"Failed to send notification: {res.StatusCode} - {await res.Content.ReadAsStringAsync(cancellationToken)}");
         }
     }
 
-    public async Task SendRackNotificationAsync(Rack rack, SyndicationItem post)
+    private async Task SendRackNotificationAsync(Rack rack, string discordMessage,
+        CancellationToken cancellationToken = default)
     {
-        if (rack == null)
-        {
-            throw new ArgumentNullException(nameof(rack), "Rack cannot be null");
-        }
+        ArgumentNullException.ThrowIfNull(rack);
 
-        var message = $"Rack Notification: {rack.Name} - {post.Title.Text}\n{post.Summary.Text}";
-        var trackers = db.Trackers
+        var trackers = await db.Trackers
             .Where(t => t.Rack != null && t.Rack.Id == rack.Id)
             .Select(t => t.WebHookUrl)
-            .ToList();
+            .ToListAsync(cancellationToken);
 
         foreach (var tracker in trackers)
         {
-            await SendDiscordNotificationAsync(message, tracker);
+            await SendDiscordNotificationAsync(discordMessage, tracker, cancellationToken);
         }
-
-        await SendDataCenterNotificationAsync(rack.Datacenter, post);
     }
 
-    public async Task SendDataCenterNotificationAsync(Datacenter datacenter, SyndicationItem post)
+    public async Task SendDataCenterNotificationAsync(Datacenter datacenter, SyndicationItem post,
+        CancellationToken cancellationToken = default)
     {
-        if (datacenter == null)
-        {
-            throw new ArgumentNullException(nameof(datacenter), "Datacenter cannot be null");
-        }
+        ArgumentNullException.ThrowIfNull(datacenter);
 
-        var trackers = db.Trackers
+        var trackers = await db.Trackers
             .Where(t => t.Datacenter != null && t.Datacenter.Id == datacenter.Id)
             .Select(t => t.WebHookUrl)
-            .ToList();
+            .ToListAsync(cancellationToken: cancellationToken);
+
+        var discordMessage = GetDiscordMessage(post);
+
+        if (post.Title.Text.Contains("Rack", StringComparison.OrdinalIgnoreCase))
+        {
+            var racks = await db.Racks.Where(r => r.Datacenter == datacenter && post.Title.Text.Contains(r.Name))
+                .ToListAsync(cancellationToken: cancellationToken);
+            foreach (var rack in racks)
+            {
+                await SendRackNotificationAsync(rack, discordMessage, cancellationToken);
+            }
+        }
 
         foreach (var tracker in trackers)
         {
-            await SendDiscordNotificationAsync(GetDiscordMessage(post), tracker);
+            await SendDiscordNotificationAsync(discordMessage, tracker, cancellationToken);
         }
 
-        await SendRegionNotificationAsync(datacenter.Region, post);
+        await SendRegionNotificationAsync(datacenter.Region, post, discordMessage, cancellationToken);
     }
 
-    public async Task SendRegionNotificationAsync(Region region, SyndicationItem post)
+    public async Task SendRegionNotificationAsync(Region region, SyndicationItem post, string? discordMessage = null,
+        CancellationToken cancellationToken = default)
     {
-        if (region == null)
-        {
-            throw new ArgumentNullException(nameof(region), "Region cannot be null");
-        }
+        ArgumentNullException.ThrowIfNull(region);
 
-        var trackers = db.Trackers
+        var trackers = await db.Trackers
             .Where(t => t.Region != null && t.Region.Id == region.Id)
             .Select(t => t.WebHookUrl)
-            .ToList();
+            .ToListAsync(cancellationToken: cancellationToken);
+
+        if (string.IsNullOrEmpty(discordMessage)) discordMessage = GetDiscordMessage(post);
 
         foreach (var tracker in trackers)
         {
-            await SendDiscordNotificationAsync(GetDiscordMessage(post), tracker);
+            await SendDiscordNotificationAsync(discordMessage, tracker, cancellationToken);
         }
     }
 
     private static string GetDiscordMessage(SyndicationItem post)
     {
-        if (post == null)
-        {
-            throw new ArgumentNullException(nameof(post), "Post cannot be null");
-        }
+        ArgumentNullException.ThrowIfNull(post);
 
         var description = ConvertHtmlToMarkdown(post.Summary.Text);
         var imageUrl = string.Empty;
@@ -124,19 +129,16 @@ public partial class DiscordWebhookHelper(MyDbContext db) : INotificationHelper
             ]
         };
 
-        return System.Text.Json.JsonSerializer.Serialize(message, new System.Text.Json.JsonSerializerOptions
+        return JsonSerializer.Serialize(message, new JsonSerializerOptions
         {
-            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         });
     }
 
     private static string ConvertHtmlToMarkdown(string html)
     {
-        if (string.IsNullOrEmpty(html))
-        {
-            return string.Empty;
-        }
+        if (string.IsNullOrEmpty(html)) return string.Empty;
 
         html = html.Replace("<br>", "\n")
             .Replace("<b>", "**")

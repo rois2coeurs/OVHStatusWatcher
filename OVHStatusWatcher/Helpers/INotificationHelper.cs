@@ -5,9 +5,9 @@ namespace OVHStatusWatcher.Helpers;
 
 public interface INotificationHelper
 {
-    public Task SendRackNotificationAsync(Rack rack, SyndicationItem post);
+    public Task SendDataCenterNotificationAsync(Datacenter datacenter, SyndicationItem post,
+        CancellationToken cancellationToken = default);
 
-    public Task SendDataCenterNotificationAsync(Datacenter datacenter, SyndicationItem post);
-
-    public Task SendRegionNotificationAsync(Region region, SyndicationItem post);
+    public Task SendRegionNotificationAsync(Region region, SyndicationItem post, string? discordMessage = null,
+        CancellationToken cancellationToken = default);
 }

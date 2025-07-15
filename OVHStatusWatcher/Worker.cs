@@ -19,7 +19,8 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
         {
             try
             {
-                await CheckOvhStatus(db);
+                await CheckOvhStatus(db, "https://bare-metal-servers.status-ovhcloud.com/history.rss", stoppingToken);
+                await CheckOvhStatus(db, "https://network.status-ovhcloud.com/history.rss", stoppingToken);
             }
             catch (Exception ex)
             {
@@ -30,11 +31,10 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
         }
     }
 
-    private static async Task CheckOvhStatus(MyDbContext db)
+    private static async Task CheckOvhStatus(MyDbContext db, string url, CancellationToken stoppingToken = default)
     {
         Console.WriteLine("Checking OVH status...");
 
-        const string url = "https://bare-metal-servers.status-ovhcloud.com/history.rss";
         using var reader = XmlReader.Create(url);
         var feed = SyndicationFeed.Load(reader);
 
@@ -46,7 +46,7 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
             {
                 if (post.Id is null || ProcessedPosts.Contains(post.Id)) continue;
 
-                await ProcessPost(post, db);
+                await ProcessPost(post, db, stoppingToken);
                 ProcessedPosts.Add(post.Id);
             }
             catch (Exception ex)
@@ -58,26 +58,9 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
         Console.WriteLine("OVH status check completed.");
     }
 
-    private static async Task ProcessPost(SyndicationItem post, MyDbContext db)
+    private static async Task ProcessPost(SyndicationItem post, MyDbContext db, CancellationToken stoppingToken = default)
     {
         var discordWebhook = new DiscordWebhookHelper(db);
-        if (OvhDataHelper.IsRack(post.Title.Text))
-        {
-            try
-            {
-                var rackNum = OvhDataHelper.ExtractRackNumber(post.Title.Text);
-                var rack = db.Racks.Include(r => r.Datacenter.Region).FirstOrDefault(r => r.Name == rackNum);
-                if (rack is not null)
-                {
-                    await discordWebhook.SendRackNotificationAsync(rack, post);
-                    return;
-                }
-            }
-            catch (Exception)
-            {
-                Console.WriteLine("Something went wrong while trying to extract rack number");
-            }
-        }
 
         var envs = OvhDataHelper.ExtractEnvs(post.Title.Text);
 
@@ -98,12 +81,12 @@ public class Worker(IServiceProvider serviceProvider) : BackgroundService
 
         foreach (var region in regions)
         {
-            await discordWebhook.SendRegionNotificationAsync(region, post);
+            await discordWebhook.SendRegionNotificationAsync(region, post, cancellationToken: stoppingToken);
         }
 
         foreach (var datacenter in datacenters)
         {
-            await discordWebhook.SendDataCenterNotificationAsync(datacenter, post);
+            await discordWebhook.SendDataCenterNotificationAsync(datacenter, post, stoppingToken);
         }
     }
 
